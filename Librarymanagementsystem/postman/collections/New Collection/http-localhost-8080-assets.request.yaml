@@ -1,0 +1,17 @@
+$kind: http-request
+name: http://localhost:8080/assets
+description: ""
+url: http://localhost:8080/assets?category=Printer
+method: GET
+queryParams:
+  category: Printer
+body:
+  type: json
+  content: "{\r
+
+    \"name\": \"Test Institution\", \r
+
+    \"location\": \"Test\"\r
+
+    }"
+order: 1789029187226
