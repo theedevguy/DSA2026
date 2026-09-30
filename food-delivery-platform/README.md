@@ -1,4 +1,4 @@
-# Food Delivery Platform — Distributed Microservices (DSA612S)
+# Food Delivery Platform — Distributed Microservices
 
 A distributed food delivery platform built as seven independent Ballerina
 microservices that coordinate over Apache Kafka and persist to MongoDB.
