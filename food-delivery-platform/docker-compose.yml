@@ -1,3 +1,9 @@
+name: food-delivery-platform
+
+# ============================================================
+# Infrastructure
+# ============================================================
+
 services:
   kafka:
     image: apache/kafka:latest
@@ -17,7 +23,44 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      # Topics are created explicitly by the kafka-init service so
+      # partition counts are part of the deployment, not an accident
+      # of the broker's auto-create default.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 3
       CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    networks:
+      - food-delivery-net
+
+  kafka-init:
+    # One-shot: creates every topic the platform uses, with an
+    # explicit partition count, then exits.
+    image: apache/kafka:latest
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        for topic in orders.created orders.confirmed orders.preparing orders.ready \
+                     orders.cancelled orders.delivered payments.completed \
+                     payments.failed delivery.assigned delivery.completed; do
+          echo "creating topic $$topic"
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 \
+            --create --if-not-exists --topic "$$topic" \
+            --partitions 3 --replication-factor 1
+        done
+        echo "--- topics now present ---"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --list
+    restart: "no"
     networks:
       - food-delivery-net
 
@@ -30,7 +73,8 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     networks:
       - food-delivery-net
 
@@ -41,6 +85,188 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok' | grep 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    networks:
+      - food-delivery-net
+
+  # ============================================================
+  # Application services
+  #
+  # Each service is an independent Ballerina program: its own
+  # database, its own consumer group, its own deployment. They are
+  # never scaled together, and none of them reads another one's
+  # database.
+  # ============================================================
+
+  order-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: order-service
+        SERVICE_PORT: 8080
+    container_name: order-service
+    ports:
+      - "8080:8080"
+    environment:
+      MONGODB_CONNECTION_URL: mongodb://mongodb:27017
+      KAFKA_BOOTSTRAP_URL: kafka:19092
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - food-delivery-net
+
+  customer-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: customer-service
+        SERVICE_PORT: 8086
+    container_name: customer-service
+    ports:
+      - "8086:8086"
+    environment:
+      MONGODB_CONNECTION_URL: mongodb://mongodb:27017
+      KAFKA_BOOTSTRAP_URL: kafka:19092
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - food-delivery-net
+
+  restaurant-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: restaurant-service
+        SERVICE_PORT: 8083
+    container_name: restaurant-service
+    ports:
+      - "8083:8083"
+    environment:
+      MONGODB_CONNECTION_URL: mongodb://mongodb:27017
+      KAFKA_BOOTSTRAP_URL: kafka:19092
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - food-delivery-net
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: payment-service
+        SERVICE_PORT: 8082
+    container_name: payment-service
+    ports:
+      - "8082:8082"
+    environment:
+      MONGODB_CONNECTION_URL: mongodb://mongodb:27017
+      KAFKA_BOOTSTRAP_URL: kafka:19092
+      # Deterministic demo default: a 20% simulated decline rate.
+      PAYMENT_FAILURE_RATE: "0.2"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - food-delivery-net
+
+  delivery-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: delivery-service
+        SERVICE_PORT: 8084
+    container_name: delivery-service
+    ports:
+      - "8084:8084"
+    environment:
+      MONGODB_CONNECTION_URL: mongodb://mongodb:27017
+      KAFKA_BOOTSTRAP_URL: kafka:19092
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - food-delivery-net
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: notification-service
+        SERVICE_PORT: 8085
+    container_name: notification-service
+    ports:
+      - "8085:8085"
+    environment:
+      MONGODB_CONNECTION_URL: mongodb://mongodb:27017
+      KAFKA_BOOTSTRAP_URL: kafka:19092
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - food-delivery-net
+
+  admin-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: admin-service
+        SERVICE_PORT: 8087
+    container_name: admin-service
+    ports:
+      - "8087:8087"
+    environment:
+      MONGODB_CONNECTION_URL: mongodb://mongodb:27017
+      # Admin reports over the peers' public APIs rather than their
+      # databases, so it needs to know where they are.
+      ORDER_SERVICE_URL: http://order-service:8080
+      PAYMENT_SERVICE_URL: http://payment-service:8082
+      RESTAURANT_SERVICE_URL: http://restaurant-service:8083
+      DELIVERY_SERVICE_URL: http://delivery-service:8084
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      order-service:
+        condition: service_started
+      restaurant-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      delivery-service:
+        condition: service_started
+    restart: unless-stopped
     networks:
       - food-delivery-net
 

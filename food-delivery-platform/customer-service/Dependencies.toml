@@ -373,7 +373,7 @@ modules = [
 
 [[package]]
 org = "tarkie_haitembu"
-name = "notification_service"
+name = "customer_service"
 version = "0.1.0"
 dependencies = [
 	{org = "ballerina", name = "http"},
@@ -385,6 +385,6 @@ dependencies = [
 	{org = "ballerinax", name = "mongodb"}
 ]
 modules = [
-	{org = "tarkie_haitembu", packageName = "notification_service", moduleName = "notification_service"}
+	{org = "tarkie_haitembu", packageName = "customer_service", moduleName = "customer_service"}
 ]
 

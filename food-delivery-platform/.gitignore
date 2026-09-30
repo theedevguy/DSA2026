@@ -1,0 +1,8 @@
+# Ballerina build output
+target/
+# Local tool caches
+.ballerina/
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/

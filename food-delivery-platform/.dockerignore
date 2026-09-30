@@ -1,0 +1,4 @@
+# Local build output must never leak into an image build context.
+**/target/
+.git/
+.DS_Store
